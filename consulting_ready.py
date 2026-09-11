@@ -81,7 +81,7 @@ DEFAULT_ZOOM = 100
 
 # 프로그램 정보
 APP_NAME = "ConsultingReady"
-APP_VERSION = "1.3"
+APP_VERSION = "1.1.0"
 APP_DESC = ("Excel / PowerPoint 문서를 저장하고 닫을 때\n"
             "화면 배율을 지정한 값으로 고정하고,\n"
             "각 시트의 커서를 A1 으로 이동해 저장합니다.")
@@ -1253,6 +1253,47 @@ def _icon_label():
     return "FIT" if _fit_mode else str(int(_target_zoom))
 
 
+def make_app_icon(size=64):
+    """앱 아이콘(문서 + 체크). 설정/정보 창의 제목 표시줄에 쓴다.
+    tools/make_icon.py 가 만드는 icon.ico 와 같은 모양을 런타임에 그린다."""
+    from PIL import Image, ImageDraw
+
+    S = 256
+    img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([0, 0, S - 1, S - 1], radius=int(S * 0.22),
+                        fill=(35, 175, 95, 255))
+    left, right = int(S * 0.26), int(S * 0.74)
+    top, bottom = int(S * 0.20), int(S * 0.80)
+    fold = int(S * 0.16)
+    d.polygon([(left, top), (right - fold, top), (right, top + fold),
+               (right, bottom), (left, bottom)], fill=(255, 255, 255, 255))
+    d.polygon([(right - fold, top), (right, top + fold),
+               (right - fold, top + fold)], fill=(214, 232, 221, 255))
+    cw = max(2, int(S * 0.055))
+    pts = [(int(S * 0.355), int(S * 0.520)),
+           (int(S * 0.455), int(S * 0.620)),
+           (int(S * 0.650), int(S * 0.395))]
+    d.line([pts[0], pts[1]], fill=(33, 160, 88, 255), width=cw)
+    d.line([pts[1], pts[2]], fill=(33, 160, 88, 255), width=cw)
+    for x, y in pts:
+        d.ellipse([x - cw // 2, y - cw // 2, x + cw // 2, y + cw // 2],
+                  fill=(33, 160, 88, 255))
+    return img.resize((size, size), Image.LANCZOS)
+
+
+def _set_window_icon(root):
+    """Tk 창의 아이콘을 앱 아이콘으로 바꾼다(기본 깃털 아이콘 대체).
+    실패해도 창은 정상 동작해야 하므로 조용히 넘어간다."""
+    try:
+        from PIL import ImageTk
+        img = ImageTk.PhotoImage(make_app_icon(64))
+        root.iconphoto(True, img)
+        root._app_icon_ref = img      # GC 방지용 참조 유지
+    except Exception:
+        pass
+
+
 def make_icon_image(label, paused):
     from PIL import Image, ImageDraw, ImageFont
 
@@ -1396,6 +1437,7 @@ def _settings_thread():
 
         root = tk.Tk()
         root.title("ConsultingReady 설정")
+        _set_window_icon(root)
         root.resizable(False, False)
         try:
             root.attributes("-topmost", True)
@@ -1643,6 +1685,7 @@ def _about_thread():
 
         root = tk.Tk()
         root.title("프로그램 정보")
+        _set_window_icon(root)
         root.resizable(False, False)
         try:
             root.attributes("-topmost", True)

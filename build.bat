@@ -10,6 +10,7 @@ python -m PyInstaller ^
   --onefile ^
   --noconsole ^
   --name ConsultingReady ^
+  --icon docs\icon.ico ^
   --hidden-import win32com ^
   --hidden-import win32com.client ^
   --hidden-import win32com.gen_py ^
@@ -18,6 +19,7 @@ python -m PyInstaller ^
   --hidden-import PIL.Image ^
   --hidden-import PIL.ImageDraw ^
   --hidden-import PIL.ImageFont ^
+  --hidden-import PIL.ImageTk ^
   --hidden-import tkinter ^
   consulting_ready.py
 

@@ -1,4 +1,14 @@
-# ConsultingReady
+<p align="center">
+  <img src="docs/icon.png" alt="ConsultingReady" width="120">
+</p>
+
+<h1 align="center">ConsultingReady</h1>
+
+<p align="center">
+  <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/yidoyoon/ConsultingReady?label=release" alt="release"></a>
+  <a href="../../actions/workflows/security.yml"><img src="https://github.com/yidoyoon/ConsultingReady/actions/workflows/security.yml/badge.svg" alt="Security Scan"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license"></a>
+</p>
 
 **Excel · PowerPoint 문서를 저장하고 닫을 때, 자동으로 "내보낼 준비 상태"로 정리하고 점검해 주는 Windows 백그라운드 프로그램입니다.**
 
@@ -270,6 +280,7 @@ Get-FileHash ConsultingReady.exe -Algorithm SHA256
 - **문서 내용을 읽거나 수집하지 않습니다.** 바꾸는 것은 배율·커서 위치·활성 시트·메모창 상태 같은 **보기 설정**뿐이며, 셀 값이나 슬라이드 내용은 건드리지 않습니다.
 - **파일을 지우지 않습니다.** 유일한 삭제는 백업 폴더에서 보관 개수를 넘은 **자기가 만든 백업 파일**뿐입니다.
 - 로그(`log.txt`)와 설정(`config.json`)은 `%LOCALAPPDATA%\ConsultingReady\` 에만 기록합니다.
+- 아이콘도 [`tools/make_icon.py`](tools/make_icon.py) 로 **코드에서 생성**합니다. 출처를 알 수 없는 바이너리를 저장소에 두지 않기 위해서입니다.
 
 > **솔직히 말씀드리면**, 위 절차들은 "악성 코드가 없음"을 수학적으로 증명하지는 못합니다. 자동 검사는 알려진 패턴만 잡고, 출처 증명은 "이 소스로 빌드했다"는 사실만 보장합니다. 다만 **소스 전체가 공개돼 있고, 배포본이 그 소스에서 만들어졌음이 검증 가능**하므로, 코드를 직접 읽어 확인하실 수 있습니다.
 

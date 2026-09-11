@@ -34,11 +34,13 @@ jobs:
         run: |
           python -m PyInstaller --noconfirm --clean --onefile --noconsole `
             --name ConsultingReady `
+            --icon docs/icon.ico `
             --hidden-import win32com --hidden-import win32com.client `
             --hidden-import win32com.gen_py --hidden-import win32timezone `
             --hidden-import pystray._win32 `
             --hidden-import PIL.Image --hidden-import PIL.ImageDraw `
-            --hidden-import PIL.ImageFont --hidden-import tkinter `
+            --hidden-import PIL.ImageFont --hidden-import PIL.ImageTk `
+            --hidden-import tkinter `
             consulting_ready.py
 
       - name: 체크섬 생성
