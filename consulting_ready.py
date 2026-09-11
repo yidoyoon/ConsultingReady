@@ -1523,7 +1523,8 @@ def _settings_thread():
 
         b_hint = tk.Label(root, anchor="w", justify="left", wraplength=360,
                           fg="#666666", font=("Malgun Gothic", 8),
-                          text="※ 백업에 실패하면 파일을 수정하지 않고 그대로 닫습니다.\n"
+                          text="※ 폴더가 없으면 자동으로 만듭니다.\n"
+                               "※ 백업에 실패하면 파일을 수정하지 않고 그대로 닫습니다.\n"
                                "※ SharePoint/OneDrive 온라인 문서는 서버 버전 기록이 "
                                "있어 백업하지 않습니다.")
         b_hint.pack(fill="x", **PAD)
@@ -1607,11 +1608,16 @@ def _settings_thread():
                                            "백업 폴더를 지정해 주세요.", parent=root)
                     return
                 if not os.path.isdir(bd):
-                    messagebox.showwarning(
-                        "입력 확인",
-                        "백업 폴더가 없습니다.\n'찾아보기...' 로 폴더를 선택해 주세요.\n\n%s"
-                        % bd, parent=root)
-                    return
+                    # 폴더가 없으면 만들어 준다. 만들 수 없는 경로일 때만 막는다.
+                    try:
+                        os.makedirs(bd, exist_ok=True)
+                        log("백업 폴더 생성: %s" % bd)
+                    except Exception as e:
+                        messagebox.showwarning(
+                            "입력 확인",
+                            "백업 폴더를 만들 수 없습니다.\n경로를 확인해 주세요.\n\n%s\n\n%s"
+                            % (bd, e), parent=root)
+                        return
                 if not (1 <= bk <= 200):
                     messagebox.showwarning("입력 확인",
                                            "보관 개수는 1 ~ 200 사이여야 합니다.",
