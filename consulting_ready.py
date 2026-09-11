@@ -343,8 +343,10 @@ def backup_document(path):
 
         base = os.path.basename(src)
         stem, ext = os.path.splitext(base)
-        tag = hashlib.sha1(
-            os.path.normcase(src).encode("utf-16le")).hexdigest()[:8]
+        # 원본 경로를 짧게 구분하기 위한 지문(보안 용도 아님).
+        # 같은 이름의 다른 폴더 파일이 섞이지 않게 하는 그룹 키로만 쓴다.
+        tag = hashlib.blake2b(
+            os.path.normcase(src).encode("utf-16le"), digest_size=4).hexdigest()
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
         dst = None

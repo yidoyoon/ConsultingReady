@@ -42,7 +42,8 @@ jobs:
 
   deps:
     name: 의존성 취약점(pip-audit)
-    runs-on: ubuntu-latest
+    # pywin32 는 Windows 전용 패키지라 Linux 러너에서는 설치 자체가 불가능하다.
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -50,10 +51,7 @@ jobs:
           python-version: '3.12'
       - run: pip install pip-audit
       - name: 사용 라이브러리 점검
-        run: |
-          printf 'pywin32\npyinstaller\npystray\npillow\n' > requirements.txt
-          pip-audit -r requirements.txt --strict || true
-          pip-audit -r requirements.txt
+        run: pip-audit -r requirements.txt
 
   no-network:
     name: 외부 통신 코드 검사
