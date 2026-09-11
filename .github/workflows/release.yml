@@ -1,0 +1,92 @@
+name: Build & Release
+
+# 태그(v1.0.0 같은)를 올리면 GitHub 가 직접 exe 를 빌드하고,
+# "이 소스로 만들었다"는 서명된 증명서(build provenance)를 함께 발행한다.
+# 제작자 PC 에서 만든 바이너리를 올리지 않으므로, 소스에 없는 코드가 섞일 수 없다.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write        # Release 생성
+  id-token: write        # 증명서 서명
+  attestations: write    # build provenance 발행
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install pywin32 pyinstaller pystray pillow
+
+      - name: 빌드
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --noconsole `
+            --name ConsultingReady `
+            --hidden-import win32com --hidden-import win32com.client `
+            --hidden-import win32com.gen_py --hidden-import win32timezone `
+            --hidden-import pystray._win32 `
+            --hidden-import PIL.Image --hidden-import PIL.ImageDraw `
+            --hidden-import PIL.ImageFont --hidden-import tkinter `
+            consulting_ready.py
+
+      - name: 체크섬 생성
+        run: |
+          cd dist
+          $h = (Get-FileHash ConsultingReady.exe -Algorithm SHA256).Hash.ToLower()
+          "$h  ConsultingReady.exe" | Out-File -FilePath SHA256SUMS.txt -Encoding ascii
+          Get-Content SHA256SUMS.txt
+
+      # 이 exe 가 이 저장소의 이 커밋에서 만들어졌음을 GitHub 가 서명해 증명한다.
+      # 검증:  gh attestation verify ConsultingReady.exe --repo <OWNER>/<REPO>
+      - name: 빌드 출처 증명(attestation) 발행
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: dist/ConsultingReady.exe
+
+      - name: Release 생성 및 파일 첨부
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/ConsultingReady.exe
+            dist/SHA256SUMS.txt
+          generate_release_notes: true
+          body: |
+            ## 설치
+
+            `ConsultingReady.exe` 를 내려받아 더블클릭하면 끝입니다. 별도 설치 과정이 없습니다.
+
+            ## 무결성 확인
+
+            이 exe 는 제작자 PC 가 아니라 **GitHub Actions 가 이 저장소의 소스로 직접 빌드**했습니다.
+            아래 명령으로 출처를 검증할 수 있습니다.
+
+            ```bash
+            gh attestation verify ConsultingReady.exe --repo ${{ github.repository }}
+            ```
+
+            체크섬 확인:
+
+            ```powershell
+            Get-FileHash ConsultingReady.exe -Algorithm SHA256
+            ```
+
+      - name: 빌드 산출물 보관
+        uses: actions/upload-artifact@v4
+        with:
+          name: ConsultingReady
+          path: |
+            dist/ConsultingReady.exe
+            dist/SHA256SUMS.txt

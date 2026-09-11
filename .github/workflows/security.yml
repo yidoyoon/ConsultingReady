@@ -1,0 +1,84 @@
+name: Security Scan
+
+# 소스에 악성/위험 코드가 없는지 자동으로 점검한다.
+# 결과는 Actions 탭과 Security 탭에서 확인할 수 있다.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 0 * * 1'      # 매주 월요일(새 취약점 공개 대응)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  codeql:
+    name: CodeQL 분석
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v3
+
+  bandit:
+    name: Bandit (Python 보안 린터)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install bandit
+      - name: 검사 실행
+        run: bandit -r . -f txt -ll
+
+  deps:
+    name: 의존성 취약점(pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pip-audit
+      - name: 사용 라이브러리 점검
+        run: |
+          printf 'pywin32\npyinstaller\npystray\npillow\n' > requirements.txt
+          pip-audit -r requirements.txt --strict || true
+          pip-audit -r requirements.txt
+
+  no-network:
+    name: 외부 통신 코드 검사
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 네트워크/원격실행 관련 코드가 있는지 확인
+        shell: bash
+        run: |
+          echo "이 프로그램은 네트워크 통신을 하지 않아야 합니다."
+          PATTERN='import[[:space:]]+(socket|requests|urllib|http\.client|ftplib|smtplib|telnetlib|paramiko)|from[[:space:]]+(socket|requests|urllib|http|ftplib|smtplib)[[:space:]]+import|urlopen\(|requests\.(get|post|put|delete)\(|socket\.socket\(|eval\(|exec\(|__import__\(|pickle\.loads\(|base64\.b64decode\('
+          if grep -nEI "$PATTERN" --include='*.py' -r .; then
+            echo ""
+            echo "::error::네트워크 통신 또는 동적 코드 실행으로 보이는 패턴이 발견되었습니다. 위 목록을 확인하세요."
+            exit 1
+          fi
+          echo "통과: 네트워크 통신 / 동적 코드 실행 패턴 없음"
+
+  syntax:
+    name: 문법 검사
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 컴파일 확인
+        run: python -m compileall -q consulting_ready.py

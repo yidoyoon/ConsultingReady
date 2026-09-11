@@ -1,0 +1,13 @@
+# 빌드 산출물
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+
+# 로컬 설정/로그
+config.json
+log.txt
+
+# 백업
+_ozr_*
