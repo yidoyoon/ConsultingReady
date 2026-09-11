@@ -1652,9 +1652,11 @@ def _settings_thread():
 
         btns = tk.Frame(root)
         btns.pack(fill="x", pady=16, **PAD)
-        tk.Button(btns, text="저장", width=9, command=on_save).pack(side="right")
+        # 오른쪽부터 pack 되므로, 화면에는 [저장] [취소] 순으로 놓인다.
         tk.Button(btns, text="취소", width=9,
-                  command=root.destroy).pack(side="right", padx=(0, 8))
+                  command=root.destroy).pack(side="right")
+        tk.Button(btns, text="저장", width=9,
+                  command=on_save).pack(side="right", padx=(0, 8))
 
         sync_entry()
         sync_filter()
