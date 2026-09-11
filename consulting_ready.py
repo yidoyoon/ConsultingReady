@@ -81,7 +81,7 @@ DEFAULT_ZOOM = 100
 
 # 프로그램 정보
 APP_NAME = "ConsultingReady"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.1.1"
 APP_DESC = ("Excel / PowerPoint 문서를 저장하고 닫을 때\n"
             "화면 배율을 지정한 값으로 고정하고,\n"
             "각 시트의 커서를 A1 으로 이동해 저장합니다.")
@@ -888,9 +888,15 @@ def _notes_pane_open(pres):
         return None
 
 
-def notes_need_work(pres):
-    """메모 창을 접을 필요가 있는가(기능이 켜져 있고 실제로 펼쳐져 있는가)."""
-    return _hide_notes and _notes_pane_open(pres) is True
+def warn_notes_open(pres, name):
+    """저장하지 않은 문서용: 파일은 건드리지 않고 메모 창이 열려 있으면 알림만."""
+    if not _hide_notes:
+        return
+    if _notes_pane_open(pres) is True:
+        log("PPT: 메모 창 열려 있음(저장하지 않음) - %s" % name)
+        show_toast("메모 창이 열려 있습니다.",
+                   "%s\n발표 준비 상태로 만들려면 메모 창을 접고 저장하세요."
+                   % name, warn=True)
 
 
 def apply_ppt(pres):
@@ -1026,36 +1032,11 @@ class PowerPointEvents:
         mode = "창에 맞춤" if _fit_mode else ("배율 %d%%" % _target_zoom)
         try:
             if not (clean and k in _session_saved):
-                # 사용자가 저장했는지와 무관하게 메모 창은 접어서 닫는다.
-                if not notes_need_work(Pres):
-                    log("PPT: %s → 건드리지 않음 (%s)"
-                        % ("저장 안 된 변경 있음" if not clean
-                           else "이번 세션 저장 없음(조회만)", name))
-                elif not clean:
-                    # 저장 안 된 편집이 있는 문서를 우리가 저장해 버리면,
-                    # 사용자가 '저장 안 함'을 고를 기회를 빼앗는다.
-                    # 그래서 메모 창만 접고 저장은 사용자 선택에 맡긴다.
-                    hide_notes_pane(Pres)
-                    log("PPT: 저장 안 된 변경 있음 → 메모 창만 접음(저장은 안 함) (%s)"
-                        % name)
-                else:
-                    # 조회만 한 문서: 메모 창을 접어 발표 준비 상태로 저장한다.
-                    bstate, bwhy, bpath = backup_document(k)
-                    if bstate == "fail":
-                        notify_backup_fail("PPT", name, bwhy)
-                    elif hide_notes_pane(Pres):
-                        try:
-                            try:
-                                Pres.Saved = False
-                            except Exception:
-                                pass
-                            Pres.Save()
-                            log("PPT: 메모 창 접고 저장 (%s)" % name)
-                        except Exception as e:
-                            # 저장에 실패해도 백업은 남겨 둔다(가장 필요한 순간이다).
-                            log("PPT: 메모 창 저장 실패 (%s) %s" % (name, e))
-                    else:
-                        discard_backup(bpath, "변경 없음")
+                # 저장하지 않은 문서: 파일은 전혀 건드리지 않고 검사만 한다.
+                log("PPT: %s → 파일 수정 없이 검사만 (%s)"
+                    % ("저장 안 된 변경 있음" if not clean
+                       else "이번 세션 저장 없음(조회만)", name))
+                warn_notes_open(Pres, name)
             else:
                 # 메모창/배율을 손대기 전에 원본을 백업한다.
                 bstate, bwhy, bpath = backup_document(k)
