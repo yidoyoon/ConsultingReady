@@ -81,7 +81,7 @@ DEFAULT_ZOOM = 100
 
 # 프로그램 정보
 APP_NAME = "ConsultingReady"
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.2"
 APP_DESC = ("Excel / PowerPoint 문서를 저장하고 닫을 때\n"
             "화면 배율을 지정한 값으로 고정하고,\n"
             "각 시트의 커서를 A1 으로 이동해 저장합니다.")
