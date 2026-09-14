@@ -81,7 +81,7 @@ DEFAULT_ZOOM = 100
 
 # 프로그램 정보
 APP_NAME = "ConsultingReady"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 APP_DESC = ("Excel / PowerPoint 문서를 저장하고 닫을 때\n"
             "화면 배율을 지정한 값으로 고정하고,\n"
             "각 시트의 커서를 A1 으로 이동해 저장합니다.")
@@ -857,16 +857,42 @@ def ppt_key(pres):
         return None
 
 
+PP_VIEW_NORMAL = 9        # ppViewNormal
+
+
+def _notes_split(pres):
+    """보통 보기에서 슬라이드 영역이 창 높이에서 차지하는 비율(%).
+    100 이면 메모 창이 접힌 상태다. 보통 보기가 아니거나 읽을 수 없으면 None."""
+    try:
+        w = pres.Windows(1)
+        if w.ViewType != PP_VIEW_NORMAL:
+            return None
+        return int(w.SplitVertical)
+    except Exception:
+        return None
+
+
 def hide_notes_pane(pres):
     """메모(발표자 노트) 창을 접어 발표 준비 상태로 만든다. 접었으면 True.
 
-    리본의 '메모' 버튼(ShowNotes)을 끄는 방식이다. 이 상태는 저장할 때
-    viewProps.xml 의 horzBarState="maximized" 로 기록되어 다시 열어도 유지된다.
-    (단, 뷰 변경만으로는 문서가 '수정됨'이 되지 않으므로 저장 직전에
-     Saved=False 를 함께 지정해야 실제로 기록된다.)"""
+    창의 SplitVertical(슬라이드 영역 비율)을 100 으로 지정해 접는다. 이 상태는
+    저장할 때 viewProps.xml 의 horzBarState="maximized" 로 기록되어 다시 열어도
+    유지된다. (뷰 변경만으로는 문서가 '수정됨'이 되지 않으므로 저장 직전에
+     Saved=False 를 함께 지정해야 실제로 기록된다.)
+
+    리본의 '메모' 버튼(ExecuteMso "ShowNotes")으로 접으면 OneDrive/SharePoint
+    (자동 저장) 문서에서는 닫기 이벤트 안에서 화면만 바뀌고 파일에는 기록되지
+    않았다. 그래서 문서 창 속성을 직접 바꾼다. 보통 보기가 아니어서
+    SplitVertical 을 쓸 수 없을 때만 리본 방식으로 접는다."""
     if not _hide_notes:
         return False
     try:
+        split = _notes_split(pres)
+        if split is not None:
+            if split >= 100:
+                return False
+            pres.Windows(1).SplitVertical = 100
+            return True
         if _notes_pane_open(pres) is True:   # 창 활성화 포함
             pres.Application.CommandBars.ExecuteMso("ShowNotes")
             return True
@@ -877,6 +903,9 @@ def hide_notes_pane(pres):
 
 def _notes_pane_open(pres):
     """메모 창이 펼쳐져 있으면 True (판단 불가면 None)."""
+    split = _notes_split(pres)
+    if split is not None:
+        return split < 100
     try:
         app = pres.Application
         try:
