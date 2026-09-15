@@ -48,6 +48,7 @@ import hashlib
 import tempfile
 import threading
 import traceback
+import unicodedata
 import datetime
 
 # ---------------------------------------------------------------------------
@@ -135,11 +136,11 @@ _target_zoom = DEFAULT_ZOOM
 _fit_mode = False
 _paused = False
 _toast_enabled = True
-# 파일명 정규식 필터
+# 파일명 키워드 필터
 _filter_enabled = False
-_filter_mode = "exclude"     # "exclude"=일치하면 제외 / "include"=일치하는 것만 처리
-_filter_pattern = ""
-_filter_re = None
+_filter_mode = "exclude"     # "exclude"=키워드가 들어간 파일 제외 / "include"=들어간 파일만 처리
+_filter_keywords = ""        # 사용자가 입력한 그대로 (예: "구글, 제미나이")
+_filter_list = []            # 비교용으로 정규화한 키워드 목록
 # 기울어진 도형(딱지) 검사
 _stamp_check = True
 # PowerPoint 메모 창 접고 저장 (발표 준비 상태)
@@ -175,7 +176,11 @@ def load_config():
         fmode = d.get("filter_mode", "exclude")
         if fmode not in ("exclude", "include"):
             fmode = "exclude"
-        fpat = str(d.get("filter_pattern", "") or "")
+        fkw = d.get("filter_keywords")
+        if fkw is None:
+            # 1.2 이하에서 저장한 정규식 필터 값을 키워드로 옮긴다.
+            fkw = keywords_from_regex(d.get("filter_pattern", ""))
+        fpat = str(fkw or "")
         stamp = bool(d.get("stamp_check", True))
         notes = bool(d.get("hide_notes", True))
         ben = bool(d.get("backup_enabled", False))
@@ -197,7 +202,7 @@ def save_config():
                        "toast": bool(_toast_enabled),
                        "filter_enabled": bool(_filter_enabled),
                        "filter_mode": _filter_mode,
-                       "filter_pattern": _filter_pattern,
+                       "filter_keywords": _filter_keywords,
                        "stamp_check": bool(_stamp_check),
                        "hide_notes": bool(_hide_notes),
                        "backup_enabled": bool(_backup_enabled),
@@ -208,29 +213,83 @@ def save_config():
         pass
 
 
-def compile_filter():
-    """필터 정규식을 컴파일한다. 오류가 있으면 오류 메시지를 반환."""
-    global _filter_re
-    pat = (_filter_pattern or "").strip()
-    if not pat:
-        _filter_re = None
-        return None
-    try:
-        _filter_re = re.compile(pat, re.IGNORECASE)   # 파일명이라 대소문자 무시
-        return None
-    except re.error as e:
-        _filter_re = None
-        return str(e)
+_KW_SPLIT = re.compile(r"[,，、;\n]+")   # 쉼표(전각 포함), 세미콜론, 줄바꿈
+
+
+def _norm_name(s):
+    """비교용 정규화: 한글 자모 결합(NFC) · 대소문자 무시 · 공백 전부 제거.
+    그래서 '통합 문서1.xlsx' 와 키워드 '통합문서' 처럼 띄어쓰기만 달라도 일치한다."""
+    s = unicodedata.normalize("NFC", str(s or ""))
+    return "".join(s.casefold().split())
+
+
+def parse_keywords(text):
+    """'구글, 제미나이' → ['구글', '제미나이'] (정규화 · 빈 값과 중복 제외)."""
+    out = []
+    for part in _KW_SPLIT.split(str(text or "")):
+        k = _norm_name(part)
+        if k and k not in out:
+            out.append(k)
+    return out
+
+
+def keywords_from_regex(pattern):
+    """1.2 이하의 정규식 필터 값을 키워드 문자열로 옮긴다.
+    '최종|배포' → '최종, 배포' / '^통합문서1\\.xlsx$' → '통합문서1.xlsx'
+    와일드카드 · 묶음 · 문자 클래스처럼 글자로 옮길 수 없는 조각은 버린다."""
+    words = []
+    for part in str(pattern or "").split("|"):
+        part = part.strip()
+        if part.startswith("^"):
+            part = part[1:]
+        if part.endswith("$") and not part.endswith("\\$"):
+            part = part[:-1]
+        word, ok, i = [], True, 0
+        while i < len(part):
+            ch = part[i]
+            if ch == "\\":
+                nxt = part[i + 1:i + 2]
+                if not nxt or nxt.isalnum():     # \\d, \\w 같은 기호는 글자로 옮길 수 없다
+                    ok = False
+                    break
+                word.append(nxt)
+                i += 2
+                continue
+            if ch in ".*+?()[]{}^$":
+                ok = False
+                break
+            word.append(ch)
+            i += 1
+        w = "".join(word).strip()
+        if ok and w:
+            words.append(w)
+    return ", ".join(words)
+
+
+def refresh_filter():
+    """입력된 키워드 문자열을 비교용 목록으로 갱신한다."""
+    global _filter_list
+    _filter_list = parse_keywords(_filter_keywords)
+
+
+def _filter_desc():
+    """로그용 필터 설명."""
+    if not _filter_enabled:
+        return "꺼짐"
+    return "%s [%s]" % ("제외" if _filter_mode == "exclude" else "허용",
+                        _filter_keywords.strip() or "키워드 없음")
 
 
 def filter_skip_reason(name):
-    """파일명 필터 때문에 건너뛰어야 하면 사유, 아니면 None."""
-    if not _filter_enabled or _filter_re is None:
+    """파일명 키워드 필터 때문에 건너뛰어야 하면 사유, 아니면 None.
+    키워드 중 하나라도 파일명에 들어 있으면 '일치'로 본다."""
+    if not _filter_enabled or not _filter_list:
         return None
-    hit = bool(_filter_re.search(name or ""))
+    n = _norm_name(name)
+    hit = next((k for k in _filter_list if k in n), None)
     if _filter_mode == "include":
-        return None if hit else "허용 패턴 불일치"
-    return "제외 패턴 일치" if hit else None
+        return None if hit else "허용 키워드 없음"
+    return ("제외 키워드 '%s' 포함" % hit) if hit else None
 
 
 def _safe_name(doc):
@@ -1385,11 +1444,11 @@ def _refresh_icon():
 
 
 def apply_settings(zoom=None, fit=None, toast=None,
-                   filter_enabled=None, filter_mode=None, filter_pattern=None,
+                   filter_enabled=None, filter_mode=None, filter_keywords=None,
                    stamp_check=None, hide_notes=None,
                    backup_enabled=None, backup_dir=None, backup_keep=None):
     global _target_zoom, _fit_mode, _toast_enabled
-    global _filter_enabled, _filter_mode, _filter_pattern, _stamp_check
+    global _filter_enabled, _filter_mode, _filter_keywords, _stamp_check
     global _hide_notes, _backup_enabled, _backup_dir, _backup_keep
     if stamp_check is not None:
         _stamp_check = bool(stamp_check)
@@ -1414,24 +1473,21 @@ def apply_settings(zoom=None, fit=None, toast=None,
         _filter_enabled = bool(filter_enabled)
     if filter_mode in ("exclude", "include"):
         _filter_mode = filter_mode
-    if filter_pattern is not None:
-        _filter_pattern = str(filter_pattern)
-    err = compile_filter()
+    if filter_keywords is not None:
+        _filter_keywords = str(filter_keywords)
+    refresh_filter()
     save_config()
     log("설정 변경: 배율 %d%% / 창에맞춤 %s / 완료알림 %s / 필터 %s / 딱지검사 %s"
         " / 메모창접기 %s"
         % (_target_zoom,
            "켜짐" if _fit_mode else "꺼짐",
            "켜짐" if _toast_enabled else "꺼짐",
-           ("%s '%s'" % ("제외" if _filter_mode == "exclude" else "허용",
-                         _filter_pattern) if _filter_enabled else "꺼짐"),
+           _filter_desc(),
            "켜짐" if _stamp_check else "꺼짐",
            "켜짐" if _hide_notes else "꺼짐"))
     log("   백업: %s" % (("켜짐 → %s (원본당 %d개 보관)"
                           % (backup_root(), _backup_keep))
                          if _backup_enabled else "꺼짐"))
-    if err:
-        log("필터 정규식 오류(무시됨): %s" % err)
     _refresh_icon()
 
 
@@ -1563,22 +1619,22 @@ def _settings_thread():
             for w in (b_entry, b_btn, b_keep_entry):
                 w.configure(state=st)
 
-        # ---------------- 파일명 정규식 필터 ----------------
+        # ---------------- 파일명 키워드 필터 ----------------
         tk.Frame(root, height=1, bg="#d9d9d9").pack(fill="x", pady=12, **PAD)
 
         f_en = tk.BooleanVar(value=bool(_filter_enabled))
         f_mode = tk.StringVar(value=_filter_mode)
-        f_pat = tk.StringVar(value=_filter_pattern)
+        f_pat = tk.StringVar(value=_filter_keywords)
 
         tk.Checkbutton(root, variable=f_en, anchor="w",
-                       text="파일명 필터 사용 (정규식)",
+                       text="파일명 키워드 필터 사용",
                        font=("Malgun Gothic", 9, "bold"),
                        command=lambda: sync_filter()).pack(fill="x", **PAD)
 
         rb1 = tk.Radiobutton(root, variable=f_mode, value="exclude", anchor="w",
-                             text="제외 — 패턴과 일치하는 파일은 건드리지 않음")
+                             text="제외 — 키워드가 들어간 파일은 건드리지 않음")
         rb2 = tk.Radiobutton(root, variable=f_mode, value="include", anchor="w",
-                             text="허용 — 패턴과 일치하는 파일만 처리")
+                             text="허용 — 키워드가 들어간 파일만 처리")
         rb1.pack(fill="x", padx=30)
         rb2.pack(fill="x", padx=30)
 
@@ -1586,29 +1642,24 @@ def _settings_thread():
         pat_entry.pack(fill="x", pady=(6, 2), **PAD)
         hint = tk.Label(root, anchor="w", justify="left", wraplength=360,
                         fg="#666666", font=("Malgun Gothic", 8),
-                        text="예) 최종|배포  ·  ^TARA  ·  \\.xlsm$   "
-                             "(대소문자 무시, 파일명에 부분 일치)")
+                        text="예) 구글, 제미나이   (쉼표로 구분 · 하나라도 들어 있으면 일치 · "
+                             "띄어쓰기와 대소문자는 무시)")
         hint.pack(fill="x", **PAD)
         status = tk.Label(root, anchor="w", justify="left", wraplength=360,
                           fg="#666666", font=("Malgun Gothic", 8), text="")
         status.pack(fill="x", **PAD)
 
         def check_pattern(*_a):
-            pat = f_pat.get().strip()
             if not f_en.get():
                 status.configure(text="", fg="#666666")
-                return True
-            if not pat:
-                status.configure(text="패턴이 비어 있어 필터가 적용되지 않습니다.",
+                return
+            words = [w.strip() for w in _KW_SPLIT.split(f_pat.get()) if w.strip()]
+            if not words:
+                status.configure(text="키워드가 비어 있어 필터가 적용되지 않습니다.",
                                  fg="#b06000")
-                return True
-            try:
-                re.compile(pat)
-            except re.error as e:
-                status.configure(text="정규식 오류: %s" % e, fg="#c01c28")
-                return False
-            status.configure(text="정규식 형식 정상", fg="#1a7f37")
-            return True
+                return
+            status.configure(text="키워드 %d개: %s" % (len(words), " / ".join(words)),
+                             fg="#1a7f37")
 
         def sync_filter(*_a):
             on = f_en.get()
@@ -1620,11 +1671,6 @@ def _settings_thread():
         f_pat.trace_add("write", check_pattern)
 
         def on_save():
-            if f_en.get() and not check_pattern():
-                messagebox.showwarning("입력 확인",
-                                       "정규식이 올바르지 않습니다.\n다시 확인해 주세요.",
-                                       parent=root)
-                return
             # 백업 설정 검증
             bd = b_dir.get().strip()
             try:
@@ -1654,7 +1700,7 @@ def _settings_thread():
                     return
             fkw = dict(filter_enabled=f_en.get(),
                        filter_mode=f_mode.get(),
-                       filter_pattern=f_pat.get().strip(),
+                       filter_keywords=f_pat.get().strip(),
                        stamp_check=stamp_var.get(),
                        hide_notes=notes_var.get(),
                        backup_enabled=b_en.get(),
@@ -1778,7 +1824,7 @@ def _about_thread():
 
 def main():
     global _icon, _target_zoom, _fit_mode, _toast_enabled, _mutex
-    global _filter_enabled, _filter_mode, _filter_pattern, _stamp_check
+    global _filter_enabled, _filter_mode, _filter_keywords, _stamp_check
     global _hide_notes, _backup_enabled, _backup_dir, _backup_keep
 
     # 단일 실행 보장: mutex 핸들을 전역에 보관해 프로세스 수명 동안 유지한다.
@@ -1788,23 +1834,20 @@ def main():
         return
 
     (_target_zoom, _fit_mode, _toast_enabled,
-     _filter_enabled, _filter_mode, _filter_pattern,
+     _filter_enabled, _filter_mode, _filter_keywords,
      _stamp_check, _hide_notes,
      _backup_enabled, _backup_dir, _backup_keep) = load_config()
-    ferr = compile_filter()
+    refresh_filter()
     log("=== ConsultingReady 시작 (%s, 완료알림 %s, 필터 %s, 딱지검사 %s,"
         " 메모창접기 %s) ==="
         % ("창에 맞춤" if _fit_mode else "배율 %d%%" % _target_zoom,
            "켜짐" if _toast_enabled else "꺼짐",
-           ("%s '%s'" % ("제외" if _filter_mode == "exclude" else "허용",
-                         _filter_pattern) if _filter_enabled else "꺼짐"),
+           _filter_desc(),
            "켜짐" if _stamp_check else "꺼짐",
            "켜짐" if _hide_notes else "꺼짐"))
     log("   백업: %s" % (("켜짐 → %s (원본당 %d개 보관)"
                           % (backup_root(), _backup_keep))
                          if _backup_enabled else "꺼짐"))
-    if ferr:
-        log("필터 정규식 오류(무시됨): %s" % ferr)
 
     stop_event = threading.Event()
     t = threading.Thread(target=worker, args=(stop_event,), daemon=True)
